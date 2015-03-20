@@ -3,17 +3,32 @@
 (test-begin "srfi-60")
 
 (test-group "Bitwise Operations"
+  (test -1 (bitwise-and))
   (test 5 (bitwise-and 5))
   (test #b1000 (bitwise-and #b1100 #b1010))
+  (test #b0000 (bitwise-and #b1100 #b0000))
+  (test #b1100 (bitwise-and #b1100 #b1111))
   (test #b0100 (bitwise-and #b0100 #b0110 #b0110 #b0101 #b1101 #b0111))
+  (test #b01010001 (bitwise-and #b01011011 #b11010101))
+  (test (- #b11011111) (bitwise-and (- #b01011011) (- #b11010101)))
 
+  (test 0 (bitwise-ior))
   (test 9 (bitwise-ior 9))
   (test #b1110 (bitwise-ior #b1100 #b1010))
+  (test #b1100 (bitwise-ior #b1100 #b0000))
+  (test #b1111 (bitwise-ior #b1100 #b1111))
   (test #b1011 (bitwise-ior #b0001 #b0000 #b1010 #b1001 #b1010 #b1000))
+  (test #b11011111 (bitwise-ior #b01011011 #b11010101))
+  (test (- #b01010001) (bitwise-ior (- #b01011011) (- #b11010101)))
 
+  (test 0 (bitwise-xor))
   (test -3 (bitwise-xor -3))
   (test #b0110 (bitwise-xor #b1100 #b1010))
+  (test #b1100 (bitwise-xor #b1100 #b0000))
+  (test #b0011 (bitwise-xor #b1100 #b1111))
   (test #b1100 (bitwise-xor #b0101 #b1110 #b0001 #b1010 #b0101 #b1001))
+  (test #b10001110 (bitwise-xor #b01011011 #b11010101))
+  (test #b10001110 (bitwise-xor (- #b01011011) (- #b11010101)))
 
   (test  0 (bitwise-not -1))
   (test -1 (bitwise-not  0))
@@ -21,6 +36,7 @@
   (test (- #b0110011) (bitwise-not #b110010))
   (test #b011001 (bitwise-and #b111111 (bitwise-not #b100110)))
   (test 1278781 (bitwise-not (bitwise-not 1278781)))
+  (test (- #b01011100) (bitwise-not #b01011011))
 
   (test #b0101 (bitwise-if #b1111 #b0101 #b1010))
   (test #b1010 (bitwise-if #b0000 #b0101 #b1010))
@@ -31,7 +47,8 @@
   (test #f (any-bits-set? #b0100 #b1011))
   (test #t (any-bits-set? #b0100 #b0111))
   (test #t (any-bits-set? #b0101 #b0111))
-  (test #f (any-bits-set? #b0101 #b1010)))
+  (test #f (any-bits-set? #b0101 #b1010))
+  (test #t (any-bits-set? #b10110101 #b01101010)))
 
 (test-group "Integer Properties"
   (test 0 (bit-count 0))
