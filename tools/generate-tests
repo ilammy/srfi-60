@@ -266,3 +266,5 @@ print generate_tests(list_to_integer)
 print group_end()
 print
 print group_end()
+print
+print "(test-exit)"

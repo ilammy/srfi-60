@@ -941,3 +941,5 @@
 (test-end)
 
 (test-end)
+
+(test-exit)
