@@ -1,11 +1,18 @@
 (define-library (srfi 60)
-  (export logand logior logxor lognot logtest logcount logbit?
-   bitwise-and bitwise-ior bitwise-xor bitwise-not bitwise-if
-   bitwise-merge ash arithmetic-shift bit-count bit-set? copy-bit
-   any-bits-set? log2-binary-factors first-set-bit integer-length
-   bit-field copy-bit-field rotate-bit-field reverse-bit-field
-   integer->list list->integer booleans->integer)
+  (export bitwise-and bitwise-ior bitwise-xor bitwise-not bitwise-if
+   arithmetic-shift bit-count bit-set? first-set-bit any-bits-set?
+   copy-bit integer-length bit-field copy-bit-field rotate-bit-field
+   reverse-bit-field integer->list list->integer booleans->integer
+   (rename bitwise-and logand) (rename any-bits-set? logtest)
+   (rename bitwise-ior logior) (rename bit-count     logcount)
+   (rename bitwise-xor logxor) (rename bit-set?      logbit?)
+   (rename bitwise-not lognot)
+   (rename bitwise-if bitwise-merge)
+   (rename arithmetic-shift ash)
+   (rename first-set-bit log2-binary-factors))
 
-  (import (scheme base))
+  (import (scheme base)
+          (scheme case-lambda)
+          (srfi 1))
 
-  (include "60/reference-implementation.scm"))
+  (include "60/portable-implementation.scm"))

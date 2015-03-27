@@ -2,3 +2,8 @@
 set -ex
 
 chibi-scheme ./srfi-60/test/srfi-60-tests.scm
+
+for gen_test in $(find ./srfi-60/test/generated)
+do
+	chibi-scheme $gen_test
+done
