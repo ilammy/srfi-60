@@ -1,207 +1,31 @@
 #!/usr/bin/env python2
 
-import math
-import random
 import sys
+import srfi_60
+import scheme_codegen
 
 width_limit = int(sys.argv[1])
 per_op_tests = int(sys.argv[2])
-integer_limit = 2**width_limit
 
-#
-# Domain definitions
-#
+srfi_60_procedures = srfi_60.make_procedures_for(width_limit)
 
-def integer(low=-2**width_limit, high=2**width_limit):
-    return lambda: random.randint(low, high)
+test_groups = {
+    'Bitwise Operations': ['bitwise_and', 'bitwise_ior', 'bitwise_xor',
+        'bitwise_not', 'bitwise_if', 'any_bits_setp'],
 
-def index(excess=0):
-    return integer(0, width_limit - 1 + excess)
+    'Integer Properties': ['bit_count', 'integer_length', 'first_set_bit'],
 
-def index_start():
-    return integer(0, width_limit / 2)
+    'Bit Within Word': ['bit_setp', 'copy_bit'],
 
-def index_end():
-    return integer(width_limit / 2, width_limit - 1)
+    'Field of Bits': ['bit_field', 'copy_bit_field', 'arithmetic_shift',
+        'rotate_bit_field', 'reverse_bit_field'],
 
-def offset(excess=0):
-    return integer(-(width_limit + excess), +(width_limit + excess))
-
-def boolean():
-    return lambda: bool(random.randint(0, 1))
-
-def list_of(count, thing):
-    return lambda: [thing() for _ in xrange(count())]
-
-#
-# Bitwise Operations
-#
-
-def bitwise_and(a, b):
-    return (a & b)
-
-def bitwise_ior(a, b):
-    return (a | b)
-
-def bitwise_xor(a, b):
-    return (a ^ b)
-
-def bitwise_not(x):
-    return (~x)
-
-def bitwise_if(c, t, f):
-    return ((c & t) | (~c & f))
-
-def any_bits_setp(m, n):
-    return bool((m & n) != 0)
-
-bitwise_and.domain   = integer(), integer()
-bitwise_ior.domain   = integer(), integer()
-bitwise_xor.domain   = integer(), integer()
-bitwise_not.domain   = integer(),
-bitwise_if.domain    = integer(), integer(), integer()
-any_bits_setp.domain = integer(), integer()
-
-#
-# Integer Properties
-#
-
-def bit_count(n):
-    if n < 0: n = ~n
-    count = 0
-    while n:
-        n &= n - 1
-        count += 1
-    return count
-
-def integer_length(n):
-    if n < 0: n = ~n
-    if n == 0: return 0
-    return int(math.floor(math.log(n, 2) + 1))
-
-def first_set_bit(n):
-    return integer_length(n & -n) - 1
-
-bit_count.domain      = integer(),
-integer_length.domain = integer(),
-first_set_bit.domain  = integer(),
-
-#
-# Bit Within Word
-#
-
-def bit_setp(index, num):
-    return bool(num & (2**index))
-
-def copy_bit(index, num, bit):
-    mask = (1 << index)
-    num &= ~mask
-    num |= (int(bit) << index)
-    return num
-
-bit_setp.domain = index(), integer()
-copy_bit.domain = index(), integer(), boolean()
-
-#
-# Field of Bits
-#
-
-def mask_of(length):
-    return ((1 << length) - 1)
-
-def mask_at(start, end):
-    return mask_of(end - start) << start
-
-def bit_field(num, start, end):
-    if end <= start:
-        return 0
-    return ((num >> start) & mask_of(end - start))
-
-def copy_bit_field(num_to, num_from, start, end):
-    if end <= start:
-        return num_to
-    to_mask = ~mask_at(start, end)
-    from_mask = mask_of(end - start)
-    return ((num_to & to_mask) | ((num_from & from_mask) << start))
-
-def arithmetic_shift(num, count):
-    if count < 0:
-        return (num >> -count)
-    else:
-        return (num << count)
-
-def rotate_bit_field(num, count, start, end):
-    if end <= start:
-        return num
-    count %= (end -start)
-    mask = mask_at(start, end)
-    chunk = bit_field(num, start, end)
-    left = arithmetic_shift(chunk, count)
-    right = arithmetic_shift(chunk, count - (end - start))
-    return bitwise_if(mask, (left | right) << start, num)
-
-def bit_reverse(num, length):
-    res = 0
-    for _ in xrange(length):
-        res <<= 1
-        res |= (num & 1)
-        num >>= 1
-    return res
-
-def reverse_bit_field(num, start, end):
-    if end <= start:
-        return num
-    mask = mask_at(start, end)
-    chunk = bit_field(num, start, end)
-    chunk = bit_reverse(chunk, (end - start))
-    return bitwise_if(mask, chunk << start, num)
-
-bit_field.domain         = integer(), index_start(), index_end()
-copy_bit_field.domain    = integer(), integer(), index_start(), index_end()
-arithmetic_shift.domain  = integer(), offset(+2)
-rotate_bit_field.domain  = integer(), offset(+2), index_start(), index_end()
-reverse_bit_field.domain = integer(), index_start(), index_end()
-
-#
-# Bits as Booleans
-#
-
-def integer_to_list(num, len):
-    result = []
-    while (len > 0):
-        result.append(bool(num & 1))
-        num >>= 1
-        len -= 1
-    result.reverse()
-    return result
-
-def list_to_integer(booleans):
-    result = 0
-    for bit in booleans:
-        result <<= 1
-        result |= int(bit)
-    return result
-
-integer_to_list.domain = integer(low=0), index(+4)
-list_to_integer.domain = list_of(index(), boolean()),
+    'Bits as Booleans': ['integer_to_list', 'list_to_integer']
+}
 
 #
 # Generating tests
 #
-
-def scheme_value(value):
-    if type(value) == bool:
-        return '#t' if value else '#f'
-    elif type(value) == list:
-        return "'(" + " ".join(map(scheme_value, value)) + ")"
-    else:
-        return str(value)
-
-def scheme_procedure_name(name):
-    name = name.replace('_', '-').replace('-to-', '->')
-    if name[-1] == 'p':
-        name = name[:-1] + '?'
-    return name
 
 def group_start(name):
     return '(test-begin "{}")'.format(name)
@@ -211,11 +35,11 @@ def group_end():
 
 def generate_tests(op):
     result = ""
-    name = scheme_procedure_name(op.__name__)
+    name = scheme_codegen.procedure_name(op.__name__)
     for _ in xrange(per_op_tests):
         args = [gen() for gen in op.domain]
-        val = scheme_value(op(*args))
-        args = " ".join(map(scheme_value, args))
+        val = scheme_codegen.value(op(*args))
+        args = " ".join(map(scheme_codegen.value, args))
         result += "(test {} ({} {}))\n".format(val, name, args)
     return result
 
@@ -227,44 +51,15 @@ print "(import (chibi) (chibi test) (srfi 60))"
 print
 print group_start("srfi-60/generated")
 print
-print group_start("Bitwise Operations")
-print
-print generate_tests(bitwise_and)
-print generate_tests(bitwise_ior)
-print generate_tests(bitwise_xor)
-print generate_tests(bitwise_not)
-print generate_tests(bitwise_if)
-print generate_tests(any_bits_setp)
-print group_end()
-print
-print group_start("Integer Properties")
-print
-print generate_tests(bit_count)
-print generate_tests(integer_length)
-print generate_tests(first_set_bit)
-print group_end()
-print
-print group_start("Bit Within Word")
-print
-print generate_tests(bit_setp)
-print generate_tests(copy_bit)
-print group_end()
-print
-print group_start("Field of Bits")
-print
-print generate_tests(bit_field)
-print generate_tests(copy_bit_field)
-print generate_tests(arithmetic_shift)
-print generate_tests(rotate_bit_field)
-print generate_tests(reverse_bit_field)
-print group_end()
-print
-print group_start("Bits as Booleans")
-print
-print generate_tests(integer_to_list)
-print generate_tests(list_to_integer)
-print group_end()
-print
+
+for group_name, procedure_names in test_groups.iteritems():
+    print group_start(group_name)
+    print
+    for procedure_name in procedure_names:
+        print generate_tests(srfi_60_procedures[procedure_name])
+    print group_end()
+    print
+
 print group_end()
 print
 print "(test-exit)"
