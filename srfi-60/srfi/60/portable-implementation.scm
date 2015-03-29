@@ -33,10 +33,15 @@
                   (cdr left))))))
 
 (define (table-uint-reduce table num1 num2)
-  (map-uint 4
-    (lambda (nibble1 nibble2)
-      (nibble-ref table nibble1 nibble2))
-    num1 num2))
+  (let loop ((num1 num1) (num2 num2) (shift 1) (result 0))
+    (if (and (zero? num1) (zero? num2))
+        result
+        (loop (quotient num1 16)
+              (quotient num2 16)
+              (* 16 shift)
+              (+ result
+                 (* shift
+                    (nibble-ref table (modulo num1 16) (modulo num2 16))))))))
 
 (define (bit-and num1 num2)
   (cond ((and (negative? num1) (negative? num2))
@@ -88,10 +93,11 @@
       (ubit-count num)))
 
 (define (ubit-count num)
-  (fold-uint 8 0
-    (lambda (sum byte)
-      (+ sum (byte-ref table-bit-count byte)))
-    num))
+  (let loop ((num num) (sum 0))
+    (if (zero? num)
+        sum
+        (loop (quotient num 256)
+              (+ sum (byte-ref table-bit-count (modulo num 256)))))))
 
 (define (integer-length num)
   (if (negative? num)
@@ -217,29 +223,6 @@
 
 (define (booleans->integer . values)
   (list->integer values))
-
-;; Utilities ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (map-uint power proc . nums)
-  (define chunk (expt 2 power))
-  (define (mask n) (modulo n chunk))
-  (define (shr n) (quotient n chunk))
-  (let loop ((nums nums) (shift 1) (result 0))
-    (if (every zero? nums)
-        result
-        (loop (map shr nums)
-              (* chunk shift)
-              (+ result (* shift (apply proc (map mask nums))))))))
-
-(define (fold-uint power seed proc . nums)
-  (define chunk (expt 2 power))
-  (define (mask n) (modulo n chunk))
-  (define (shr n) (quotient n chunk))
-  (let loop ((nums nums) (seed seed))
-    (if (every zero? nums)
-        seed
-        (loop (map shr nums)
-              (apply proc seed (map mask nums))))))
 
 ;; Bit operations lookup tables ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
