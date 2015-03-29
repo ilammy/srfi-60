@@ -1,0 +1,37 @@
+#!/usr/bin/env python2
+
+import sys
+import srfi_60
+import scheme_codegen
+
+width_limit = int(sys.argv[1])
+sample_count = int(sys.argv[2])
+run_count = int(sys.argv[3])
+
+srfi_60_procedures = srfi_60.make_procedures_for(width_limit)
+
+#
+# Generating benchmarks
+#
+
+def generate_benchmarks(name, procedure):
+    result = ""
+    name = scheme_codegen.procedure_name(name)
+    result += '(bench "{}" {}\n'.format(name, sample_count) + '  (lambda ()\n'
+    for _ in xrange(run_count):
+        args = " ".join(map(scheme_codegen.value,
+                            [gen() for gen in procedure.domain]))
+        result += "    ({} {})\n".format(name, args)
+    result += "))"
+    return result
+
+#
+# Printing out
+#
+
+print "(import (scheme base) (srfi 60) (bench))"
+print
+
+for name, procedure in srfi_60_procedures.iteritems():
+    print generate_benchmarks(name, procedure)
+    print
