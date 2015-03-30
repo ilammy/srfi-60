@@ -19,6 +19,8 @@
   (if (negative? num) (ashr/- num count) (ashr/+ num count)))
 
 (define (mask num length) (modulo num (nth-bit length)))
+(define (~mask num length) (- (nth-bit length) 1 (modulo num (nth-bit length))))
+
 
 (define (mask-of length)    (- (nth-bit length) 1))
 (define (mask-at start end) (ashl (mask-of (- end start)) start))
@@ -100,13 +102,53 @@
     (+- (bit-not (table-uint-reduce table-0110          num1  (bit-not num2))))
     (--          (table-uint-reduce table-0110 (bit-not num1) (bit-not num2)))))
 
+; (not (zero? (bit-and mask num))), but we can do it without temporary values
 (define (any-bits-set? mask num)
-  (not (zero? (bitwise-and mask num))))
+  (sign-cond (mask num)
+    (++ (any-bits-set/uint? table-0001          mask           num))
+    (-+ (any-bits-set/uint? table-0100 (bit-not mask)          num))
+    (+- (any-bits-set/uint? table-0010          mask  (bit-not num)))
+    (-- (any-bits-set/uint? table-0111 (bit-not mask) (bit-not num)))))
+
+(define (any-bits-set/uint? table num1 num2)
+  (let loop ((num1 num1) (num2 num2))
+    (if (and (zero? num1) (zero? num2))
+        #f
+        (if (zero? (nibble-ref table (mask num1 4) (mask num2 4)))
+            (loop (ashr/+ num1 4) (ashr/+ num2 4))
+            #t))))
 
 ;; Bitwise Operations (triadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; Obvious inversion to have non-negative mask
 (define (bitwise-if mask true false)
-  (bit-ior (bit-and mask true) (bit-and (bit-not mask) false)))
+  (if (negative? mask)
+      (bitwise-if/uint-mask (bit-not mask) false true)
+      (bitwise-if/uint-mask          mask  true false)))
+
+; if(M, A, B) = (M ∧ A) ∨ (¬M ∧ B)
+;             = (M ∧ A) + (¬M ∧ B) because (M ∧ A) ∧ (¬M ∧ B) = 0
+;
+;     (M ∧  A) ∨ (¬M ∧  B)
+; =   (M ↛ ¬A) ∨ (¬M ∧  B)
+; = ¬((M ↛  A) ∨ (¬M ∧ ¬B))
+; = ¬((M ∧ ¬A) ∨ (¬M ∧ ¬B))
+(define (bitwise-if/uint-mask mask true false)
+  (sign-cond (true false)
+    (++          (table-uint-reduce/if table-0001 table-0001 mask          true           false))
+    (-+          (table-uint-reduce/if table-0010 table-0001 mask (bit-not true)          false))
+    (+- (bit-not (table-uint-reduce/if table-0010 table-0001 mask          true  (bit-not false))))
+    (-- (bit-not (table-uint-reduce/if table-0001 table-0001 mask (bit-not true) (bit-not false))))))
+
+(define (table-uint-reduce/if table-t table-f bit-mask true false)
+  (let loop ((bit-mask bit-mask) (true true) (false false) (shift 1) (result 0))
+    (if (and (zero? true) (zero? false))
+        result
+        (loop (ashr/+ bit-mask 4) (ashr/+ true 4) (ashr/+ false 4) (ashl shift 4)
+              (+ result
+                 (* shift
+                    (+ (nibble-ref table-t  (mask bit-mask 4) (mask true 4))
+                       (nibble-ref table-f (~mask bit-mask 4) (mask false 4)))))))))
 
 ;; Integer Properties ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
