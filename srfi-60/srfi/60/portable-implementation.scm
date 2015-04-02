@@ -285,10 +285,15 @@
                   (cons (= bit (mask num 1)) result))))))
 
 (define (list->integer booleans)
-  (fold
-    (lambda (boolean num)
-      (+ (ashl num 1) (if boolean 1 0)))
-    0 booleans))
+  (let loop ((booleans booleans) (result 0) (buffer 0) (buffer-bits 0))
+    (if (null? booleans) ; are we done?
+        (+ (ashl result buffer-bits) buffer)
+        (if (= buffer-bits 16) ; is the buffer full?
+            (loop booleans (+ (ashl result 16) buffer)
+                  0 0)
+            (loop (cdr booleans) result
+                  (+ (ashl buffer 1) (if (car booleans) 1 0))
+                  (+ 1 buffer-bits))))))
 
 (define (booleans->integer . values)
   (list->integer values))

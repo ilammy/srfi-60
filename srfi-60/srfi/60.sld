@@ -12,7 +12,6 @@
    (rename first-set-bit log2-binary-factors))
 
   (import (scheme base)
-          (scheme case-lambda)
-          (srfi 1))
+          (scheme case-lambda))
 
   (include "60/portable-implementation.scm"))
