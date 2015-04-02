@@ -21,10 +21,6 @@
 (define (mask num length) (modulo num (nth-bit length)))
 (define (~mask num length) (- (nth-bit length) 1 (modulo num (nth-bit length))))
 
-
-(define (mask-of length)    (- (nth-bit length) 1))
-(define (mask-at start end) (ashl (mask-of (- end start)) start))
-
 ;; Bitwise Operations (variadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define bitwise-and
@@ -185,65 +181,82 @@
 
 ;; Bit Within Word ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; In two's complement even numbers always have zero as their lowest bit
 (define (bit-set? index num)
-  (any-bits-set? (nth-bit index) num))
+  (= 1 (mask (ashr num index) 1)))
 
+(define (xor p q) (or (and p q) (not (or p q))))
+
+; Quickly set unset bit with +, unset set bit with -
 (define (copy-bit index num bit)
-  (if bit
-      (bit-ior num (nth-bit index))
-      (bit-and num (bit-not (nth-bit index)))))
+  (if (xor bit (bit-set? index num))
+      num
+      (if bit
+          (+ num (nth-bit index))
+          (- num (nth-bit index)))))
 
 ;; Field of Bits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define (bit-field num start end)
-  (if (<= end start) 0
-      (bit-and (arithmetic-shift num (- start))
-               (mask-of (- end start)))))
+(define-syntax let-checked
+  (syntax-rules ()
+    ((_ (length (start end) default) body ...)
+     (let ((length (- end start)))
+       (if (<= length 0)
+           default
+           (begin body ...))))))
 
+; Shift right and chop the chunk we want
+(define (bit-field num start end)
+  (let-checked (length (start end) 0)
+    (if (negative? num)
+        (~mask (ashr/+ (bit-not num) start) length)
+        (mask (ashr/+ num start) length))))
+
+; Concat num-to/after-end $ num-from/interesting-field $ num-to/before-start
 (define (copy-bit-field num-to num-from start end)
-  (if (<= end start) num-to
-      (bitwise-if
-        (mask-at start end)
-        (arithmetic-shift num-from start)
-        num-to)))
+  (let-checked (length (start end) num-to)
+    (if (negative? num-to)
+        (+ (ashl (ashr/- num-to end) end)
+           (ashl (bit-field num-from 0 length) start)
+           (~mask (bit-not num-to) start))
+        (+ (ashl (ashr/+ num-to end) end)
+           (ashl (bit-field num-from 0 length) start)
+           (mask num-to start)))))
 
 (define (arithmetic-shift num count)
   (if (negative? count)
-      (if (negative? num)
-          (bit-not (quotient (bit-not num) (nth-bit (- count))))
-          (quotient num (nth-bit (- count))))
-      (* num (nth-bit count))))
+      (ashr num (- count))
+      (ashl num count)))
 
+; Extract the chunk, rotate, place it back
 (define (rotate-bit-field num count start end)
-  (if (<= end start) num
-      (let ((count (modulo count (- end start))))
-        (define mask (mask-at start end))
-        (define chunk (arithmetic-shift (bit-and num mask) (- start)))
-        (bitwise-if mask
-          (arithmetic-shift
-            (bit-ior (arithmetic-shift chunk count)
-                    (arithmetic-shift chunk (- count (- end start))))
-            start)
-          num))))
+  (let-checked (length (start end) num)
+    (let ((count (modulo count length)))
+      (copy-bit-field num
+        (rotate-bits (bit-field num start end) length count)
+        start end))))
 
+; Add two overflowing non-intersecting parts, mask out garbage
+(define (rotate-bits num length count)
+  (if (negative? count)
+      (mask (+ (ashl num (- length count)) (ashr/+ num count)) length)
+      (mask (+ (ashl num count) (ashr/+ num (- length count))) length)))
+
+; Extract the chunk, reverse, place it back
 (define (reverse-bit-field num start end)
-  (if (<= end start) num
-      (let ((mask (mask-at start end)))
-        (bit-ior
-          (arithmetic-shift
-            (reverse-bits (- end start)
-              (arithmetic-shift (bit-and num mask) (- start)))
-            start)
-          (bit-and num (bit-not mask))))))
+  (let-checked (length (start end) num)
+    (copy-bit-field num
+      (reverse-bits length (bit-field num start end))
+      start end)))
 
-(define (ceiling-quotient p q)
-  (quotient (+ p q -1) q))
+(define (ceiling-quotient p q) (quotient (+ p q -1) q))
+(define (ceiling-modulo p q) (- (modulo (- p 1) q) q -1))
 
+; First reverse whole bytes and their order, then trim excess bits
 (define (reverse-bits length num)
   (arithmetic-shift
     (reverse-bytes (ceiling-quotient length 8) num)
-    (if (zero? (modulo length 8)) 0
-        (- (modulo length 8) 8))))
+    (ceiling-modulo length 8)))
 
 (define (reverse-bytes byte-count num)
   (let loop ((count byte-count) (num num) (result 0))
