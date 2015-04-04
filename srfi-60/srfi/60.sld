@@ -14,4 +14,8 @@
   (import (scheme base)
           (scheme case-lambda))
 
+  (cond-expand
+    (chibi
+      (include-shared "60/native-implementation")))
+
   (include "60/portable-implementation.scm"))
