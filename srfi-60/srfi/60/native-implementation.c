@@ -91,6 +91,45 @@ sexp_uint_t bignum_next_limb(sexp bignum, sexp_uint_t index, int *state)
 }
 
 /*
+ * (bit-and num1 num2) - bitwise conjunction
+ */
+
+static
+sexp sexp_bit_and_big_fix(sexp context, sexp self, sexp_sint_t n,
+		sexp bignum, sexp fixnum)
+{
+	return sexp_type_exception(context, self, SEXP_OBJECT, SEXP_VOID);
+}
+
+static
+sexp sexp_bit_and_big_big(sexp context, sexp self, sexp_sint_t n,
+		sexp num1, sexp num2)
+{
+	return sexp_type_exception(context, self, SEXP_OBJECT, SEXP_VOID);
+}
+
+static
+sexp sexp_bit_and(sexp context, sexp self, sexp_sint_t n, sexp num1, sexp num2)
+{
+	if (sexp_fixnump(num1) && sexp_fixnump(num2))
+		return (sexp)((sexp_uint_t)num1 & (sexp_uint_t)num2);
+
+	if (sexp_fixnump(num1) && sexp_bignump(num2))
+		return sexp_bit_and_big_fix(context, self, n, num1, num2);
+
+	if (sexp_bignump(num1) && sexp_fixnump(num2))
+		return sexp_bit_and_big_fix(context, self, n, num2, num1);
+
+	if (sexp_bignump(num1) && sexp_bignump(num2))
+		return sexp_bit_and_big_big(context, self, n, num1, num2);
+
+	if (!(sexp_fixnump(num1) || sexp_bignump(num1)))
+		return sexp_type_exception(context, self, SEXP_FIXNUM, num1);
+	else
+		return sexp_type_exception(context, self, SEXP_FIXNUM, num2);
+}
+
+/*
  * (bitwise-not num) - bitwise inversion
  */
 
@@ -140,6 +179,7 @@ sexp sexp_init_library(sexp context, sexp self, sexp_sint_t n, sexp env,
 		return SEXP_ABI_ERROR;
 	}
 
+	sexp_define_foreign(context, env, "bit-and", 2, sexp_bit_and);
 	sexp_define_foreign(context, env, "bitwise-not", 1, sexp_bitwise_not);
 
 	return SEXP_VOID;
