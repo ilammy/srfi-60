@@ -1,0 +1,6 @@
+#!/bin/sh
+set -ex
+
+cmake -DCMAKE_BUILD_TYPE=Release .
+
+make

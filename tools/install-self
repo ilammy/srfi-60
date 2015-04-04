@@ -1,11 +1,19 @@
 #!/bin/sh
 set -ex
 
-chibi_install_dir=/usr/local/share/chibi
+scheme_public= $(find ./srfi-60/srfi    -maxdepth 1 -type f -name '*.sld')
+scheme_private=$(find ./srfi-60/srfi/60 -maxdepth 1 -type f -name '*.scm')
+native_library=$(find ./srfi-60/srfi/60 -maxdepth 1 -type f -name '*.so')
+
+chibi_scheme_dir=/usr/local/share/chibi
+chibi_native_dir=/usr/local/lib/chibi
 
 sudo mkdir $chibi_install_dir/srfi/60
+sudo mkdir $chibi_native_dir/srfi/60
 
-sudo install --mode=0644 $(find ./srfi-60/srfi    -maxdepth 1 -type f) $chibi_install_dir/srfi
-sudo install --mode=0644 $(find ./srfi-60/srfi/60 -maxdepth 1 -type f) $chibi_install_dir/srfi/60
+sudo install --mode=0644 $scheme_public  $chibi_scheme_dir/srfi
+sudo install --mode=0644 $scheme_private $chibi_scheme_dir/srfi/60
+sudo install --mode=0755 $native_library $chibi_native_dir/srfi/60
 
-sudo chown --recursive root $chibi_install_dir/srfi/60
+sudo chown --recursive root $chibi_scheme_dir/srfi/60
+sudo chown --recursive root $chibi_native_dir/srfi/60

@@ -1,2 +1,13 @@
+# Python JIT
 *.pyc
 
+# CMake shit
+/CMakeCache.txt
+/CMakeFiles
+/Makefile
+/cmake_install.cmake
+
+# Binaries
+*.so
+*.o
+*.a
