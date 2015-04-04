@@ -2,24 +2,43 @@
 ;; Copyright (c) 2015 ilammy <a.lozovsky@gmail.com>
 ;; 3-clause BSD license: http://github.com/ilammy/srfi-60/blob/master/LICENSE
 
-;; Bitwise Operations (monadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (bit-not n)
-  (- -1 n))
-
 ;; Primitive bit shifts and masks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define (nth-bit index) (expt 2 index))
+(define-syntax define-inline
+  (syntax-rules ()
+    ((_ (binding args ...) body ...)
+     (define-syntax binding
+       (syntax-rules ()
+         ((binding args ...) body ...))))))
 
-(define (ashl num count) (* num (nth-bit count)))
+(define-inline (bit-not n)
+  (- -1 n))
 
-(define (ashr/+ num count) (quotient num (nth-bit count)))
-(define (ashr/- num count) (bit-not (ashr/+ (bit-not num) count)))
-(define (ashr num count)
+(define-inline (nth-bit index)
+  (expt 2 index))
+
+(define-inline (ashl num count)
+  (* num (nth-bit count)))
+
+(define-inline (ashr/+ num count)
+  (quotient num (nth-bit count)))
+
+(define-inline (ashr/- num count)
+  (bit-not (ashr/+ (bit-not num) count)))
+
+(define-inline (ashr num count)
   (if (negative? num) (ashr/- num count) (ashr/+ num count)))
 
-(define (mask num length) (modulo num (nth-bit length)))
-(define (~mask num length) (- (nth-bit length) 1 (modulo num (nth-bit length))))
+(define-inline (mask num length)
+  (modulo num (nth-bit length)))
+
+(define-inline (~mask num length)
+  (- (nth-bit length) 1 (modulo num (nth-bit length))))
+
+;; Bitwise Operations (monadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (bitwise-not n)
+  (bit-not n))
 
 ;; Bitwise Operations (variadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -53,14 +72,19 @@
 
 ;; Bitwise Operations (dyadic);;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define-inline (ashr/4 num) (quotient num 16))
+(define-inline (ashl/4 num) (* num 16))
+(define-inline (mask/4 num) (modulo num 16))
+(define-inline (~mask/4 num) (- 15 (modulo num 16)))
+
 (define (table-uint-reduce table num1 num2)
   (let loop ((num1 num1) (num2 num2) (shift 1) (result 0))
     (if (and (zero? num1) (zero? num2))
         result
-        (loop (ashr/+ num1 4) (ashr/+ num2 4) (ashl shift 4)
+        (loop (ashr/4 num1) (ashr/4 num2) (ashl/4 shift)
               (+ result
                  (* shift
-                    (nibble-ref table (mask num1 4) (mask num2 4))))))))
+                    (nibble-ref table (mask/4 num1) (mask/4 num2))))))))
 
 ; table-uint-reduce must be applied to non-negative integers, so each
 ; operation using it should check whether its arguments are negative and
@@ -110,8 +134,8 @@
   (let loop ((num1 num1) (num2 num2))
     (if (and (zero? num1) (zero? num2))
         #f
-        (if (zero? (nibble-ref table (mask num1 4) (mask num2 4)))
-            (loop (ashr/+ num1 4) (ashr/+ num2 4))
+        (if (zero? (nibble-ref table (mask/4 num1) (mask/4 num2)))
+            (loop (ashr/4 num1) (ashr/4 num2))
             #t))))
 
 ;; Bitwise Operations (triadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -140,13 +164,17 @@
   (let loop ((bit-mask bit-mask) (true true) (false false) (shift 1) (result 0))
     (if (and (zero? true) (zero? false))
         result
-        (loop (ashr/+ bit-mask 4) (ashr/+ true 4) (ashr/+ false 4) (ashl shift 4)
+        (loop (ashr/4 bit-mask) (ashr/4 true) (ashr/4 false) (ashl/4 shift)
               (+ result
                  (* shift
-                    (+ (nibble-ref table-t  (mask bit-mask 4) (mask true 4))
-                       (nibble-ref table-f (~mask bit-mask 4) (mask false 4)))))))))
+                    (+ (nibble-ref table-t  (mask/4 bit-mask) (mask/4 true))
+                       (nibble-ref table-f (~mask/4 bit-mask) (mask/4 false)))))))))
 
 ;; Integer Properties ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-inline (ashr/8 num) (quotient num 256))
+(define-inline (ashl/8 num) (* num 256))
+(define-inline (mask/8 num) (modulo num 256))
 
 (define (bit-count num)
   (if (negative? num)
@@ -157,8 +185,8 @@
   (let loop ((num num) (sum 0))
     (if (zero? num)
         sum
-        (loop (ashr/+ num 8)
-              (+ sum (byte-ref table-bit-count (mask num 8)))))))
+        (loop (ashr/8 num)
+              (+ sum (byte-ref table-bit-count (mask/8 num)))))))
 
 (define (integer-length num)
   (if (negative? num)
@@ -169,15 +197,15 @@
   (let loop ((num num) (count 0))
     (if (< num 256)
         (+ count (byte-ref table-integer-length num))
-        (loop (ashr/+ num 8)
+        (loop (ashr/8 num)
               (+ count 8)))))
 
 (define (first-set-bit num)
   (if (zero? num) -1
       (let loop ((num num) (count 0))
-        (if (zero? (mask num 8))
-            (loop (ashr num 8) (+ count 8))
-            (+ count (byte-ref table-first-bit (mask num 8)))))))
+        (if (zero? (mask/8 num))
+            (loop (ashr/8 num) (+ count 8))
+            (+ count (byte-ref table-first-bit (mask/8 num)))))))
 
 ;; Bit Within Word ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -263,11 +291,14 @@
     (if (zero? count)
         result
         (loop (- count 1)
-              (ashr/+ num 8)
-              (+ (ashl result 8)
-                 (byte-ref table-reverse (mask num 8)))))))
+              (ashr/8 num)
+              (+ (ashl/8 result)
+                 (byte-ref table-reverse (mask/8 num)))))))
 
 ;; Bits as Booleans ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-inline (ashl/16 num) (* num 65536))
+(define-inline (ashl/1 num)  (+ num num))
 
 (define integer->list
   (case-lambda
@@ -289,10 +320,10 @@
     (if (null? booleans) ; are we done?
         (+ (ashl result buffer-bits) buffer)
         (if (= buffer-bits 16) ; is the buffer full?
-            (loop booleans (+ (ashl result 16) buffer)
+            (loop booleans (+ (ashl/16 result) buffer)
                   0 0)
             (loop (cdr booleans) result
-                  (+ (ashl buffer 1) (if (car booleans) 1 0))
+                  (+ (ashl/1 buffer) (if (car booleans) 1 0))
                   (+ 1 buffer-bits))))))
 
 (define (booleans->integer . values)
@@ -304,7 +335,7 @@
   (bytevector-u8-ref table byte))
 
 (define (nibble-ref table high-nibble low-nibble)
-  (bytevector-u8-ref table (+ (ashl high-nibble 4) low-nibble)))
+  (bytevector-u8-ref table (+ (ashl/4 high-nibble) low-nibble)))
 
 ;; Conjunction
 (define table-0001
