@@ -37,8 +37,8 @@
 
 ;; Bitwise Operations (monadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define (bitwise-not n)
-  (bit-not n))
+;(define (bitwise-not n)
+;  (bit-not n))
 
 ;; Bitwise Operations (variadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
