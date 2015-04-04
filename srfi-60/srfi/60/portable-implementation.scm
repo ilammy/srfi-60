@@ -2,7 +2,45 @@
 ;; Copyright (c) 2015 ilammy <a.lozovsky@gmail.com>
 ;; 3-clause BSD license: http://github.com/ilammy/srfi-60/blob/master/LICENSE
 
-;; Bitwise Operations ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Primitive bit shifts and masks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-syntax define-inline
+  (syntax-rules ()
+    ((_ (binding args ...) body ...)
+     (define-syntax binding
+       (syntax-rules ()
+         ((binding args ...) body ...))))))
+
+(define-inline (bit-not n)
+  (- -1 n))
+
+(define-inline (nth-bit index)
+  (expt 2 index))
+
+(define-inline (ashl num count)
+  (* num (nth-bit count)))
+
+(define-inline (ashr/+ num count)
+  (quotient num (nth-bit count)))
+
+(define-inline (ashr/- num count)
+  (bit-not (ashr/+ (bit-not num) count)))
+
+(define-inline (ashr num count)
+  (if (negative? num) (ashr/- num count) (ashr/+ num count)))
+
+(define-inline (mask num length)
+  (modulo num (nth-bit length)))
+
+(define-inline (~mask num length)
+  (- (nth-bit length) 1 (modulo num (nth-bit length))))
+
+;; Bitwise Operations (monadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (bitwise-not n)
+  (bit-not n))
+
+;; Bitwise Operations (variadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define bitwise-and
   (case-lambda
@@ -32,6 +70,274 @@
             (loop (bit-op result (car left))
                   (cdr left))))))
 
+;; Bitwise Operations (dyadic);;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-inline (ashr/4 num) (quotient num 16))
+(define-inline (ashl/4 num) (* num 16))
+(define-inline (mask/4 num) (modulo num 16))
+(define-inline (~mask/4 num) (- 15 (modulo num 16)))
+
+(define (table-uint-reduce table num1 num2)
+  (let loop ((num1 num1) (num2 num2) (shift 1) (result 0))
+    (if (and (zero? num1) (zero? num2))
+        result
+        (loop (ashr/4 num1) (ashr/4 num2) (ashl/4 shift)
+              (+ result
+                 (* shift
+                    (nibble-ref table (mask/4 num1) (mask/4 num2))))))))
+
+; table-uint-reduce must be applied to non-negative integers, so each
+; operation using it should check whether its arguments are negative and
+; use appropriate identities to get proper value from negated arguments.
+(define-syntax sign-cond
+  (syntax-rules (++ +- -+ --)
+    ((_ (num1 num2)
+        (++ expr++ ...) (-+ expr-+ ...) (+- expr+- ...) (-- expr-- ...))
+     (cond ((and (negative? num1) (negative? num2)) expr-- ...)
+           ((negative? num1)                        expr-+ ...)
+           ((negative? num2)                        expr+- ...)
+           (else                                    expr++ ...)))))
+
+; A ∧ B = ¬A ↚ B = A ↛ ¬B = ¬(¬A ∨ ¬B)
+(define (bit-and num1 num2)
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0001          num1           num2))
+    (-+          (table-uint-reduce table-0100 (bit-not num1)          num2))
+    (+-          (table-uint-reduce table-0010          num1  (bit-not num2)))
+    (-- (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))))
+
+; A ∨ B = ¬(¬A ↛ B) = ¬(A ↚ ¬B) = ¬(¬A ∧ ¬B)
+(define (bit-ior num1 num2)
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0111          num1           num2))
+    (-+ (bit-not (table-uint-reduce table-0010 (bit-not num1)          num2)))
+    (+- (bit-not (table-uint-reduce table-0100          num1  (bit-not num2))))
+    (-- (bit-not (table-uint-reduce table-0001 (bit-not num1) (bit-not num2))))))
+
+; A ↮ B = ¬(¬A ↮ B) = ¬(A ↮ ¬B) = (¬A ↮ ¬B)
+(define (bit-xor num1 num2)
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0110          num1           num2))
+    (-+ (bit-not (table-uint-reduce table-0110 (bit-not num1)          num2)))
+    (+- (bit-not (table-uint-reduce table-0110          num1  (bit-not num2))))
+    (--          (table-uint-reduce table-0110 (bit-not num1) (bit-not num2)))))
+
+; (not (zero? (bit-and mask num))), but we can do it without temporary values
+(define (any-bits-set? mask num)
+  (sign-cond (mask num)
+    (++ (any-bits-set/uint? table-0001          mask           num))
+    (-+ (any-bits-set/uint? table-0100 (bit-not mask)          num))
+    (+- (any-bits-set/uint? table-0010          mask  (bit-not num)))
+    (-- (any-bits-set/uint? table-0111 (bit-not mask) (bit-not num)))))
+
+(define (any-bits-set/uint? table num1 num2)
+  (let loop ((num1 num1) (num2 num2))
+    (if (and (zero? num1) (zero? num2))
+        #f
+        (if (zero? (nibble-ref table (mask/4 num1) (mask/4 num2)))
+            (loop (ashr/4 num1) (ashr/4 num2))
+            #t))))
+
+;; Bitwise Operations (triadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Obvious inversion to have non-negative mask
+(define (bitwise-if mask true false)
+  (if (negative? mask)
+      (bitwise-if/uint-mask (bit-not mask) false true)
+      (bitwise-if/uint-mask          mask  true false)))
+
+; if(M, A, B) = (M ∧ A) ∨ (¬M ∧ B)
+;             = (M ∧ A) + (¬M ∧ B) because (M ∧ A) ∧ (¬M ∧ B) = 0
+;
+;     (M ∧  A) ∨ (¬M ∧  B)
+; =   (M ↛ ¬A) ∨ (¬M ∧  B)
+; = ¬((M ↛  A) ∨ (¬M ∧ ¬B))
+; = ¬((M ∧ ¬A) ∨ (¬M ∧ ¬B))
+(define (bitwise-if/uint-mask mask true false)
+  (sign-cond (true false)
+    (++          (table-uint-reduce/if table-0001 table-0001 mask          true           false))
+    (-+          (table-uint-reduce/if table-0010 table-0001 mask (bit-not true)          false))
+    (+- (bit-not (table-uint-reduce/if table-0010 table-0001 mask          true  (bit-not false))))
+    (-- (bit-not (table-uint-reduce/if table-0001 table-0001 mask (bit-not true) (bit-not false))))))
+
+(define (table-uint-reduce/if table-t table-f bit-mask true false)
+  (let loop ((bit-mask bit-mask) (true true) (false false) (shift 1) (result 0))
+    (if (and (zero? true) (zero? false))
+        result
+        (loop (ashr/4 bit-mask) (ashr/4 true) (ashr/4 false) (ashl/4 shift)
+              (+ result
+                 (* shift
+                    (+ (nibble-ref table-t  (mask/4 bit-mask) (mask/4 true))
+                       (nibble-ref table-f (~mask/4 bit-mask) (mask/4 false)))))))))
+
+;; Integer Properties ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-inline (ashr/8 num) (quotient num 256))
+(define-inline (ashl/8 num) (* num 256))
+(define-inline (mask/8 num) (modulo num 256))
+
+(define (bit-count num)
+  (if (negative? num)
+      (ubit-count (bit-not num))
+      (ubit-count num)))
+
+(define (ubit-count num)
+  (let loop ((num num) (sum 0))
+    (if (zero? num)
+        sum
+        (loop (ashr/8 num)
+              (+ sum (byte-ref table-bit-count (mask/8 num)))))))
+
+(define (integer-length num)
+  (if (negative? num)
+      (uinteger-length (bit-not num))
+      (uinteger-length num)))
+
+(define (uinteger-length num)
+  (let loop ((num num) (count 0))
+    (if (< num 256)
+        (+ count (byte-ref table-integer-length num))
+        (loop (ashr/8 num)
+              (+ count 8)))))
+
+(define (first-set-bit num)
+  (if (zero? num) -1
+      (let loop ((num num) (count 0))
+        (if (zero? (mask/8 num))
+            (loop (ashr/8 num) (+ count 8))
+            (+ count (byte-ref table-first-bit (mask/8 num)))))))
+
+;; Bit Within Word ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; In two's complement even numbers always have zero as their lowest bit
+(define (bit-set? index num)
+  (= 1 (mask (ashr num index) 1)))
+
+(define (xor p q) (or (and p q) (not (or p q))))
+
+; Quickly set unset bit with +, unset set bit with -
+(define (copy-bit index num bit)
+  (if (xor bit (bit-set? index num))
+      num
+      (if bit
+          (+ num (nth-bit index))
+          (- num (nth-bit index)))))
+
+;; Field of Bits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-syntax let-checked
+  (syntax-rules ()
+    ((_ (length (start end) default) body ...)
+     (let ((length (- end start)))
+       (if (<= length 0)
+           default
+           (begin body ...))))))
+
+; Shift right and chop the chunk we want
+(define (bit-field num start end)
+  (let-checked (length (start end) 0)
+    (if (negative? num)
+        (~mask (ashr/+ (bit-not num) start) length)
+        (mask (ashr/+ num start) length))))
+
+; Concat num-to/after-end $ num-from/interesting-field $ num-to/before-start
+(define (copy-bit-field num-to num-from start end)
+  (let-checked (length (start end) num-to)
+    (if (negative? num-to)
+        (+ (ashl (ashr/- num-to end) end)
+           (ashl (bit-field num-from 0 length) start)
+           (~mask (bit-not num-to) start))
+        (+ (ashl (ashr/+ num-to end) end)
+           (ashl (bit-field num-from 0 length) start)
+           (mask num-to start)))))
+
+(define (arithmetic-shift num count)
+  (if (negative? count)
+      (ashr num (- count))
+      (ashl num count)))
+
+; Extract the chunk, rotate, place it back
+(define (rotate-bit-field num count start end)
+  (let-checked (length (start end) num)
+    (let ((count (modulo count length)))
+      (copy-bit-field num
+        (rotate-bits (bit-field num start end) length count)
+        start end))))
+
+; Add two overflowing non-intersecting parts, mask out garbage
+(define (rotate-bits num length count)
+  (if (negative? count)
+      (mask (+ (ashl num (- length count)) (ashr/+ num count)) length)
+      (mask (+ (ashl num count) (ashr/+ num (- length count))) length)))
+
+; Extract the chunk, reverse, place it back
+(define (reverse-bit-field num start end)
+  (let-checked (length (start end) num)
+    (copy-bit-field num
+      (reverse-bits length (bit-field num start end))
+      start end)))
+
+(define (ceiling-quotient p q) (quotient (+ p q -1) q))
+(define (ceiling-modulo p q) (- (modulo (- p 1) q) q -1))
+
+; First reverse whole bytes and their order, then trim excess bits
+(define (reverse-bits length num)
+  (arithmetic-shift
+    (reverse-bytes (ceiling-quotient length 8) num)
+    (ceiling-modulo length 8)))
+
+(define (reverse-bytes byte-count num)
+  (let loop ((count byte-count) (num num) (result 0))
+    (if (zero? count)
+        result
+        (loop (- count 1)
+              (ashr/8 num)
+              (+ (ashl/8 result)
+                 (byte-ref table-reverse (mask/8 num)))))))
+
+;; Bits as Booleans ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-inline (ashl/16 num) (* num 65536))
+(define-inline (ashl/1 num)  (+ num num))
+
+(define integer->list
+  (case-lambda
+    ((num)        (integer->list* num (integer-length num)))
+    ((num length) (integer->list* num length))))
+
+(define (integer->list* num length)
+  (let ((bit (if (negative? num) 0 1)))
+    (let loop ((num (if (negative? num) (bit-not num) num))
+               (length length) (result '()))
+        (if (zero? length)
+            result
+            (loop (ashr/+ num 1)
+                  (- length 1)
+                  (cons (= bit (mask num 1)) result))))))
+
+(define (list->integer booleans)
+  (let loop ((booleans booleans) (result 0) (buffer 0) (buffer-bits 0))
+    (if (null? booleans) ; are we done?
+        (+ (ashl result buffer-bits) buffer)
+        (if (= buffer-bits 16) ; is the buffer full?
+            (loop booleans (+ (ashl/16 result) buffer)
+                  0 0)
+            (loop (cdr booleans) result
+                  (+ (ashl/1 buffer) (if (car booleans) 1 0))
+                  (+ 1 buffer-bits))))))
+
+(define (booleans->integer . values)
+  (list->integer values))
+
+;; Bit operations lookup tables ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (byte-ref table byte)
+  (bytevector-u8-ref table byte))
+
+(define (nibble-ref table high-nibble low-nibble)
+  (bytevector-u8-ref table (+ (ashl/4 high-nibble) low-nibble)))
+
+;; Conjunction
 (define table-0001
   #u8( 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
        0  1  0  1  0  1  0  1  0  1  0  1  0  1  0  1
@@ -50,6 +356,7 @@
        0  0  2  2  4  4  6  6  8  8 10 10 12 12 14 14
        0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15))
 
+;; Converse nonimplication
 (define table-0100
   #u8( 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
        0  0  2  2  4  4  6  6  8  8 10 10 12 12 14 14
@@ -68,6 +375,7 @@
        0  1  0  1  0  1  0  1  0  1  0  1  0  1  0  1
        0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0))
 
+;; Material nonimplication
 (define table-0010
   #u8( 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
        1  0  1  0  1  0  1  0  1  0  1  0  1  0  1  0
@@ -86,6 +394,7 @@
       14 14 12 12 10 10  8  8  6  6  4  4  2  2  0  0
       15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0))
 
+;; Disjuction
 (define table-0111
   #u8( 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
        1  1  3  3  5  5  7  7  9  9 11 11 13 13 15 15
@@ -104,6 +413,7 @@
       14 15 14 15 14 15 14 15 14 15 14 15 14 15 14 15
       15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15))
 
+;; Exclusive disjunction
 (define table-0110
   #u8( 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
        1  0  3  2  5  4  7  6  9  8 11 10 13 12 15 14
@@ -122,56 +432,7 @@
       14 15 12 13 10 11  8  9  6  7  4  5  2  3  0  1
       15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0))
 
-(define (table-uint-reduce table num1 num2)
-  (map-uint 4
-    (lambda (nibble1 nibble2)
-      (bytevector-u8-ref table (+ (* 16 nibble1) nibble2)))
-    num1 num2))
-
-(define (bit-and num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))
-        ((negative? num1)
-         (table-uint-reduce table-0100 (bit-not num1) num2))
-        ((negative? num2)
-         (table-uint-reduce table-0100 (bit-not num2) num1))
-        (else
-         (table-uint-reduce table-0001 num1 num2))))
-
-(define (bit-ior num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (bit-not (table-uint-reduce table-0001 (bit-not num1) (bit-not num2))))
-        ((negative? num1)
-         (bit-not (table-uint-reduce table-0010 (bit-not num1) num2)))
-        ((negative? num2)
-         (bit-not (table-uint-reduce table-0010 (bit-not num2) num1)))
-        (else
-         (table-uint-reduce table-0111 num1 num2))))
-
-(define (bit-xor num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (table-uint-reduce table-0110 (bit-not num1) (bit-not num2)))
-        ((negative? num1)
-         (bit-not (table-uint-reduce table-0110 (bit-not num1) num2)))
-        ((negative? num2)
-         (bit-not (table-uint-reduce table-0110 num1 (bit-not num2))))
-        (else
-         (table-uint-reduce table-0110 num1 num2))))
-
-(define (bitwise-not n)
-  (bit-not n))
-
-(define (bit-not n)
-  (- -1 n))
-
-(define (bitwise-if mask true false)
-  (bit-ior (bit-and mask true) (bit-and (bitwise-not mask) false)))
-
-(define (any-bits-set? mask num)
-  (not (zero? (bitwise-and mask num))))
-
-;; Integer Properties ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;; Number of set bits in a byte
 (define table-bit-count
   #u8(0 1 1 2 1 2 2 3 1 2 2 3 2 3 3 4
       1 2 2 3 2 3 3 4 2 3 3 4 3 4 4 5
@@ -190,6 +451,7 @@
       3 4 4 5 4 5 5 6 4 5 5 6 5 6 6 7
       4 5 5 6 5 6 6 7 5 6 6 7 6 7 7 8))
 
+;; Index of the leftmost set bit + 1
 (define table-integer-length
   #u8(0 1 2 2 3 3 3 3 4 4 4 4 4 4 4 4
       5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
@@ -208,24 +470,7 @@
       8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
       8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8))
 
-(define table-integer-length
-  #u8(0 1 2 2 3 3 3 3 4 4 4 4 4 4 4 4
-      5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
-      6 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6
-      6 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6
-      7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
-      7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
-      7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
-      7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
-      8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8))
-
+;; Index of the rightmost set bit
 (define table-first-bit
   #u8(0 0 1 0 2 0 1 0 3 0 1 0 2 0 1 0
       4 0 1 0 2 0 1 0 3 0 1 0 2 0 1 0
@@ -244,107 +489,7 @@
       5 0 1 0 2 0 1 0 3 0 1 0 2 0 1 0
       4 0 1 0 2 0 1 0 3 0 1 0 2 0 1 0))
 
-(define (bit-count num)
-  (if (negative? num)
-      (ubit-count (bit-not num))
-      (ubit-count num)))
-
-(define (ubit-count num)
-  (fold-uint 8 0
-    (lambda (sum byte)
-      (+ sum (bytevector-u8-ref table-bit-count byte)))
-    num))
-
-(define (integer-length num)
-  (if (negative? num)
-      (uinteger-length (bit-not num))
-      (uinteger-length num)))
-
-(define (uinteger-length num)
-  (let loop ((num num) (count 0))
-    (if (< num 256)
-        (+ count (bytevector-u8-ref table-integer-length num))
-        (loop (quotient num 256)
-              (+ count 8)))))
-
-(define (first-set-bit num)
-  (if (zero? num) -1
-      (let loop ((num num) (count 0))
-        (if (zero? (modulo num 256))
-            (loop (arithmetic-shift num -8)
-                  (+ count 8))
-            (+ count (bytevector-u8-ref table-first-bit (modulo num 256)))))))
-
-;; Bit Within Word ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (nth-bit index) (expt 2 index))
-
-(define (bit-set? index num)
-  (any-bits-set? (nth-bit index) num))
-
-(define (copy-bit index num bit)
-  (if bit
-      (bit-ior num (nth-bit index))
-      (bit-and num (bit-not (nth-bit index)))))
-
-;; Field of Bits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (mask-of count)
-  (- (nth-bit count) 1))
-
-(define (mask-at start end)
-  (arithmetic-shift (mask-of (- end start)) start))
-
-(define (bit-field num start end)
-  (if (<= end start) 0
-      (bit-and (arithmetic-shift num (- start))
-               (mask-of (- end start)))))
-
-(define (copy-bit-field num-to num-from start end)
-  (if (<= end start) num-to
-      (bitwise-if
-        (mask-at start end)
-        (arithmetic-shift num-from start)
-        num-to)))
-
-(define (arithmetic-shift num count)
-  (if (negative? count)
-      (if (negative? num)
-          (bit-not (quotient (bit-not num) (nth-bit (- count))))
-          (quotient num (nth-bit (- count))))
-      (* num (nth-bit count))))
-
-(define (rotate-bit-field num count start end)
-  (if (<= end start) num
-      (let ((count (modulo count (- end start))))
-        (define mask (mask-at start end))
-        (define chunk (arithmetic-shift (bit-and num mask) (- start)))
-        (bitwise-if mask
-          (arithmetic-shift
-            (bit-ior (arithmetic-shift chunk count)
-                    (arithmetic-shift chunk (- count (- end start))))
-            start)
-          num))))
-
-(define (reverse-bit-field num start end)
-  (if (<= end start) num
-      (let ((mask (mask-at start end)))
-        (bit-ior
-          (arithmetic-shift
-            (reverse-bits (- end start)
-              (arithmetic-shift (bit-and num mask) (- start)))
-            start)
-          (bit-and num (bit-not mask))))))
-
-(define (ceiling-quotient p q)
-  (quotient (+ p q -1) q))
-
-(define (reverse-bits length num)
-  (arithmetic-shift
-    (reverse-bytes (ceiling-quotient length 8) num)
-    (if (zero? (modulo length 8)) 0
-        (- (modulo length 8) 8))))
-
+;; Reversed bits in a byte
 (define table-reverse
   #u8( 0 128 64 192 32 160  96 224 16 144 80 208 48 176 112 240
        8 136 72 200 40 168 104 232 24 152 88 216 56 184 120 248
@@ -362,61 +507,3 @@
       11 139 75 203 43 171 107 235 27 155 91 219 59 187 123 251
        7 135 71 199 39 167 103 231 23 151 87 215 55 183 119 247
       15 143 79 207 47 175 111 239 31 159 95 223 63 191 127 255))
-
-(define (reverse-bytes byte-count num)
-  (let loop ((count byte-count) (num num) (result 0))
-    (if (zero? count)
-        result
-        (loop (- count 1)
-              (quotient num 256)
-              (+ (* result 256)
-                 (bytevector-u8-ref table-reverse (modulo num 256)))))))
-
-;; Bits as Booleans ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define integer->list
-  (case-lambda
-    ((num)        (integer->list* num (integer-length num)))
-    ((num length) (integer->list* num length))))
-
-(define (integer->list* num length)
-  (let ((bit (if (negative? num) 0 1)))
-    (let loop ((num (if (negative? num) (bit-not num) num))
-               (length length) (result '()))
-        (if (zero? length)
-            result
-            (loop (quotient num 2)
-                  (- length 1)
-                  (cons (= bit (modulo num 2)) result))))))
-
-(define (list->integer booleans)
-  (fold
-    (lambda (boolean num)
-      (+ (arithmetic-shift num 1) (if boolean 1 0)))
-    0 booleans))
-
-(define (booleans->integer . values)
-  (list->integer values))
-
-;; Utilities ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (map-uint power proc . nums)
-  (define chunk (expt 2 power))
-  (define (mask n) (modulo n chunk))
-  (define (shr n) (quotient n chunk))
-  (let loop ((nums nums) (shift 1) (result 0))
-    (if (every zero? nums)
-        result
-        (loop (map shr nums)
-              (* chunk shift)
-              (+ result (* shift (apply proc (map mask nums))))))))
-
-(define (fold-uint power seed proc . nums)
-  (define chunk (expt 2 power))
-  (define (mask n) (modulo n chunk))
-  (define (shr n) (quotient n chunk))
-  (let loop ((nums nums) (seed seed))
-    (if (every zero? nums)
-        seed
-        (loop (map shr nums)
-              (apply proc seed (map mask nums))))))
