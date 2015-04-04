@@ -2,7 +2,28 @@
 ;; Copyright (c) 2015 ilammy <a.lozovsky@gmail.com>
 ;; 3-clause BSD license: http://github.com/ilammy/srfi-60/blob/master/LICENSE
 
-;; Bitwise Operations ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Bitwise Operations (monadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (bit-not n)
+  (- -1 n))
+
+;; Primitive bit shifts and masks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (nth-bit index) (expt 2 index))
+
+(define (ashl num count) (* num (nth-bit count)))
+
+(define (ashr/+ num count) (quotient num (nth-bit count)))
+(define (ashr/- num count) (bit-not (ashr/+ (bit-not num) count)))
+(define (ashr num count)
+  (if (negative? num) (ashr/- num count) (ashr/+ num count)))
+
+(define (mask num length) (modulo num (nth-bit length)))
+
+(define (mask-of length)    (- (nth-bit length) 1))
+(define (mask-at start end) (ashl (mask-of (- end start)) start))
+
+;; Bitwise Operations (variadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define bitwise-and
   (case-lambda
@@ -32,58 +53,60 @@
             (loop (bit-op result (car left))
                   (cdr left))))))
 
+;; Bitwise Operations (dyadic);;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (define (table-uint-reduce table num1 num2)
   (let loop ((num1 num1) (num2 num2) (shift 1) (result 0))
     (if (and (zero? num1) (zero? num2))
         result
-        (loop (quotient num1 16)
-              (quotient num2 16)
-              (* 16 shift)
+        (loop (ashr/+ num1 4) (ashr/+ num2 4) (ashl shift 4)
               (+ result
                  (* shift
-                    (nibble-ref table (modulo num1 16) (modulo num2 16))))))))
+                    (nibble-ref table (mask num1 4) (mask num2 4))))))))
 
+; table-uint-reduce must be applied to non-negative integers, so each
+; operation using it should check whether its arguments are negative and
+; use appropriate identities to get proper value from negated arguments.
+(define-syntax sign-cond
+  (syntax-rules (++ +- -+ --)
+    ((_ (num1 num2)
+        (++ expr++ ...) (-+ expr-+ ...) (+- expr+- ...) (-- expr-- ...))
+     (cond ((and (negative? num1) (negative? num2)) expr-- ...)
+           ((negative? num1)                        expr-+ ...)
+           ((negative? num2)                        expr+- ...)
+           (else                                    expr++ ...)))))
+
+; A ∧ B = ¬A ↚ B = A ↛ ¬B = ¬(¬A ∨ ¬B)
 (define (bit-and num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))
-        ((negative? num1)
-         (table-uint-reduce table-0100 (bit-not num1) num2))
-        ((negative? num2)
-         (table-uint-reduce table-0100 (bit-not num2) num1))
-        (else
-         (table-uint-reduce table-0001 num1 num2))))
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0001          num1           num2))
+    (-+          (table-uint-reduce table-0100 (bit-not num1)          num2))
+    (+-          (table-uint-reduce table-0010          num1  (bit-not num2)))
+    (-- (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))))
 
+; A ∨ B = ¬(¬A ↛ B) = ¬(A ↚ ¬B) = ¬(¬A ∧ ¬B)
 (define (bit-ior num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (bit-not (table-uint-reduce table-0001 (bit-not num1) (bit-not num2))))
-        ((negative? num1)
-         (bit-not (table-uint-reduce table-0010 (bit-not num1) num2)))
-        ((negative? num2)
-         (bit-not (table-uint-reduce table-0010 (bit-not num2) num1)))
-        (else
-         (table-uint-reduce table-0111 num1 num2))))
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0111          num1           num2))
+    (-+ (bit-not (table-uint-reduce table-0010 (bit-not num1)          num2)))
+    (+- (bit-not (table-uint-reduce table-0100          num1  (bit-not num2))))
+    (-- (bit-not (table-uint-reduce table-0001 (bit-not num1) (bit-not num2))))))
 
+; A ↮ B = ¬(¬A ↮ B) = ¬(A ↮ ¬B) = (¬A ↮ ¬B)
 (define (bit-xor num1 num2)
-  (cond ((and (negative? num1) (negative? num2))
-         (table-uint-reduce table-0110 (bit-not num1) (bit-not num2)))
-        ((negative? num1)
-         (bit-not (table-uint-reduce table-0110 (bit-not num1) num2)))
-        ((negative? num2)
-         (bit-not (table-uint-reduce table-0110 num1 (bit-not num2))))
-        (else
-         (table-uint-reduce table-0110 num1 num2))))
-
-(define (bitwise-not n)
-  (bit-not n))
-
-(define (bit-not n)
-  (- -1 n))
-
-(define (bitwise-if mask true false)
-  (bit-ior (bit-and mask true) (bit-and (bitwise-not mask) false)))
+  (sign-cond (num1 num2)
+    (++          (table-uint-reduce table-0110          num1           num2))
+    (-+ (bit-not (table-uint-reduce table-0110 (bit-not num1)          num2)))
+    (+- (bit-not (table-uint-reduce table-0110          num1  (bit-not num2))))
+    (--          (table-uint-reduce table-0110 (bit-not num1) (bit-not num2)))))
 
 (define (any-bits-set? mask num)
   (not (zero? (bitwise-and mask num))))
+
+;; Bitwise Operations (triadic) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (bitwise-if mask true false)
+  (bit-ior (bit-and mask true) (bit-and (bit-not mask) false)))
 
 ;; Integer Properties ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -96,8 +119,8 @@
   (let loop ((num num) (sum 0))
     (if (zero? num)
         sum
-        (loop (quotient num 256)
-              (+ sum (byte-ref table-bit-count (modulo num 256)))))))
+        (loop (ashr/+ num 8)
+              (+ sum (byte-ref table-bit-count (mask num 8)))))))
 
 (define (integer-length num)
   (if (negative? num)
@@ -108,20 +131,17 @@
   (let loop ((num num) (count 0))
     (if (< num 256)
         (+ count (byte-ref table-integer-length num))
-        (loop (quotient num 256)
+        (loop (ashr/+ num 8)
               (+ count 8)))))
 
 (define (first-set-bit num)
   (if (zero? num) -1
       (let loop ((num num) (count 0))
-        (if (zero? (modulo num 256))
-            (loop (arithmetic-shift num -8)
-                  (+ count 8))
-            (+ count (byte-ref table-first-bit (modulo num 256)))))))
+        (if (zero? (mask num 8))
+            (loop (ashr num 8) (+ count 8))
+            (+ count (byte-ref table-first-bit (mask num 8)))))))
 
 ;; Bit Within Word ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (nth-bit index) (expt 2 index))
 
 (define (bit-set? index num)
   (any-bits-set? (nth-bit index) num))
@@ -132,12 +152,6 @@
       (bit-and num (bit-not (nth-bit index)))))
 
 ;; Field of Bits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (mask-of count)
-  (- (nth-bit count) 1))
-
-(define (mask-at start end)
-  (arithmetic-shift (mask-of (- end start)) start))
 
 (define (bit-field num start end)
   (if (<= end start) 0
@@ -194,9 +208,9 @@
     (if (zero? count)
         result
         (loop (- count 1)
-              (quotient num 256)
-              (+ (* result 256)
-                 (byte-ref table-reverse (modulo num 256)))))))
+              (ashr/+ num 8)
+              (+ (ashl result 8)
+                 (byte-ref table-reverse (mask num 8)))))))
 
 ;; Bits as Booleans ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -211,14 +225,14 @@
                (length length) (result '()))
         (if (zero? length)
             result
-            (loop (quotient num 2)
+            (loop (ashr/+ num 1)
                   (- length 1)
-                  (cons (= bit (modulo num 2)) result))))))
+                  (cons (= bit (mask num 1)) result))))))
 
 (define (list->integer booleans)
   (fold
     (lambda (boolean num)
-      (+ (arithmetic-shift num 1) (if boolean 1 0)))
+      (+ (ashl num 1) (if boolean 1 0)))
     0 booleans))
 
 (define (booleans->integer . values)
@@ -230,7 +244,7 @@
   (bytevector-u8-ref table byte))
 
 (define (nibble-ref table high-nibble low-nibble)
-  (bytevector-u8-ref table (+ (* 16 high-nibble) low-nibble)))
+  (bytevector-u8-ref table (+ (ashl high-nibble 4) low-nibble)))
 
 ;; Conjunction
 (define table-0001
