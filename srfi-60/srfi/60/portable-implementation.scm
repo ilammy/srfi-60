@@ -99,12 +99,12 @@
            (else                                    expr++ ...)))))
 
 ; A ∧ B = ¬A ↚ B = A ↛ ¬B = ¬(¬A ∨ ¬B)
-(define (bit-and num1 num2)
-  (sign-cond (num1 num2)
-    (++          (table-uint-reduce table-0001          num1           num2))
-    (-+          (table-uint-reduce table-0100 (bit-not num1)          num2))
-    (+-          (table-uint-reduce table-0010          num1  (bit-not num2)))
-    (-- (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))))
+;(define (bit-and num1 num2)
+;  (sign-cond (num1 num2)
+;    (++          (table-uint-reduce table-0001          num1           num2))
+;    (-+          (table-uint-reduce table-0100 (bit-not num1)          num2))
+;    (+-          (table-uint-reduce table-0010          num1  (bit-not num2)))
+;    (-- (bit-not (table-uint-reduce table-0111 (bit-not num1) (bit-not num2))))))
 
 ; A ∨ B = ¬(¬A ↛ B) = ¬(A ↚ ¬B) = ¬(¬A ∧ ¬B)
 (define (bit-ior num1 num2)
