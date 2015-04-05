@@ -5,9 +5,90 @@
  */
 
 #include <assert.h>
+#include <stdbool.h>
 
 #include <chibi/sexp.h>
 #include <chibi/bignum.h>
+
+/*
+ * Two's-complement conversion
+ *
+ * One option to get a two's-complement would be to allocate new bignums and
+ * store converted arguments there. Pro: conversion is straighforward. Con:
+ * more stress on the garbage collector (three new bignums instead of one).
+ * So instead we go for the on-the-fly streaming conversion.
+ */
+
+static inline
+sexp_uint_t signum_limb(sexp bignum)
+{
+	assert(sexp_bignump(bignum) && "Expect a bignum argument");
+
+	return (sexp_uint_t)((sexp_bignum_sign(bignum) < 0) ? -1 : 0);
+}
+
+static inline
+bool index_overflows(sexp_uint_t index, sexp bignum)
+{
+	assert(sexp_bignump(bignum) && "Expect a bignum argument");
+
+	return (index >= sexp_bignum_length(bignum));
+}
+
+enum
+{
+	STATE_MET_ONLY_ZEROS,
+	STATE_MET_NON_ZERO,
+	STATE_OVERFLOW,
+};
+
+#define START_ITERATION STATE_MET_ONLY_ZEROS
+
+/**
+ * Iterate over a bignum limbs in two's-complement representation.
+ *
+ * This function implements stateful iteration over (limitless) bignum limbs.
+ * The `state` parameter should be initialized with `START_ITERATION` on start
+ * and not messed up with after the first call. The `index` is meant to be
+ * incremented by one between the calls (until the `state` is reinitialized).
+ *
+ * Remember that numbers in two's-complement representation have effectively
+ * unlimited length due to sign-extension. That is, positive numbers have
+ * unlimited stream of zeroes as their most significant bits while negative
+ * numbers have a stream of ones at the same place. Therefore it is safe to
+ * pass indices larger than the number of limbs in a fixnum, in this case a
+ * special sign-extension limb will be returned.
+ *
+ * @param bignum  a bignum to iterate over
+ * @param index   bignum limb index
+ * @param state   pointer to iteration state
+ *
+ * @returns Two's-complement representation of `bignum[index]` limb.
+ */
+static inline
+sexp_uint_t bignum_next_limb(sexp bignum, sexp_uint_t index, int *state)
+{
+	sexp_uint_t limb;
+
+	assert(state && "State must be non-NULL");
+	assert(sexp_bignump(bignum) && "Expect a bignum argument");
+
+	if ((*state == STATE_OVERFLOW) || index_overflows(index, bignum)) {
+		*state = STATE_OVERFLOW;
+		return signum_limb(bignum);
+	}
+
+	limb = sexp_bignum_data(bignum)[index];
+
+	if (sexp_bignum_sign(bignum) < 0) {
+		limb = (*state == STATE_MET_ONLY_ZEROS) ? -limb : ~limb;
+
+		if ((*state == STATE_MET_ONLY_ZEROS) && (limb != 0))
+			*state = STATE_MET_NON_ZERO;
+	}
+
+	return limb;
+}
 
 /*
  * (bitwise-not num) - bitwise inversion
