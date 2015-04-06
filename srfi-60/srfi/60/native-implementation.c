@@ -90,6 +90,66 @@ sexp_uint_t bignum_next_limb(sexp bignum, sexp_uint_t index, int *state)
 	return limb;
 }
 
+/**
+ * Convert two's-complement representation to conventional one.
+ *
+ * "Two's complement bignums" are a special intermediate kind of bignums that
+ * result from bitwise operations. They have non-zero length and contain data,
+ * but that data is an array of _unsigned_ limbs. The sign of the bignum is +,
+ * however the actual sign is encoded in the most significant bit of the last
+ * limb. This function converts such bignums into proper sign-magnitude ones.
+ *
+ * @param bignum  bignum to be converted
+ */
+static
+void convert_to_sign_magnitude(sexp bignum)
+{
+	signed char sign;
+	sexp_uint_t i, len;
+	sexp_uint_t* limbs;
+	sexp_uint_t signum;
+
+	assert(sexp_bignump(bignum) && "Expect bignum argument");
+	assert((sexp_bignum_length(bignum) > 0) && "Bignum must be not empty");
+	assert((sexp_bignum_sign(bignum) == 1) && "Bignum must be positive");
+
+	len = sexp_bignum_length(bignum);
+	limbs = sexp_bignum_data(bignum);
+	sign = ((sexp_sint_t)(limbs[len - 1]) >= 0) ? +1 : -1;
+	signum = (sign > 0) ? 0 : -1;
+
+	/* Shave off sign extension */
+
+	i = len - 1;
+	while ((limbs[i] != signum) && (i > 0))
+		i--;
+
+	if (i == 0) {
+		/* When all limbs are filled with ones then this is a -1 which
+		   will be handled properly below. But if they are filled with
+		   zeros then it is 0 which has special sign. */
+		if ((sign > 0) && (limbs[0] == signum))
+			sign = 0;
+	}
+	len = i + 1;
+
+	/* Do the actual conversion for negative numbers */
+
+	if (sign < 0) {
+		for (i = 0; i < len; i++) {
+			limbs[i] = -limbs[i];
+
+			if (limbs[i] != 0)
+				break;
+		}
+		for (i = i + 1; i < len; i++)
+			limbs[i] = ~limbs[i];
+	}
+
+	sexp_bignum_length(bignum) = len;
+	sexp_bignum_sign(bignum) = sign;
+}
+
 /*
  * (bit-and num1 num2) - bitwise conjunction
  */
