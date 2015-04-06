@@ -161,11 +161,39 @@ sexp sexp_bit_and_big_fix(sexp context, sexp self, sexp_sint_t n,
 	return sexp_type_exception(context, self, SEXP_OBJECT, SEXP_VOID);
 }
 
+static inline
+sexp_uint_t max(sexp_uint_t v1, sexp_uint_t v2)
+{
+	return (v1 > v2) ? v1 : v2;
+}
+
 static
 sexp sexp_bit_and_big_big(sexp context, sexp self, sexp_sint_t n,
 		sexp num1, sexp num2)
 {
-	return sexp_type_exception(context, self, SEXP_OBJECT, SEXP_VOID);
+	sexp_uint_t i, len;
+	int state1, state2;
+	sexp_gc_var1(result);
+	sexp_gc_preserve1(context, result);
+
+	assert(sexp_bignump(num1) && "Expect a bignum argument");
+	assert(sexp_bignump(num2) && "Expect a bignum argument");
+
+	len = max(sexp_bignum_length(num1), sexp_bignum_length(num2));
+	result = sexp_make_bignum(context, len);
+
+	state1 = state2 = START_ITERATION;
+	for (i = 0; i < len; i++) {
+		sexp_bignum_data(result)[i] =
+			bignum_next_limb(num1, i, &state1) &
+			bignum_next_limb(num2, i, &state2);
+	}
+
+	convert_to_sign_magnitude(result);
+	result = sexp_bignum_normalize(result);
+
+	sexp_gc_release1(context);
+	return result;
 }
 
 static
