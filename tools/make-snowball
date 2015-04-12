@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+
+tar cz srfi-60 > srfi-60.tgz
