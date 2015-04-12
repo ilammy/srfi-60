@@ -1,5 +1,6 @@
 (package
   (name (srfi 60))
+  (version "1.0.0")
   (description "SRFI 60 'Integers as Bits'")
   (homepage "https://github.com/ilammy/srfi-60")
   (authors "ilammy")
